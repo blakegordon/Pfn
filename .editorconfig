@@ -1,0 +1,93 @@
+root = true
+
+[*.cs]
+# ==============================================================================
+# 1. DEAD CODE & UNNECESSARY MEMBERS
+# (These surface as greyed-out text and 3 dots in VS by default)
+# ==============================================================================
+dotnet_diagnostic.IDE0001.severity = warning # Simplify names
+dotnet_diagnostic.IDE0002.severity = warning # Simplify member access
+dotnet_diagnostic.IDE0004.severity = warning # Remove unnecessary cast
+dotnet_diagnostic.IDE0005.severity = warning # Remove unnecessary using directives
+dotnet_diagnostic.IDE0035.severity = warning # Remove unreachable code
+dotnet_diagnostic.IDE0051.severity = warning # Remove unused private members
+dotnet_diagnostic.IDE0052.severity = warning # Remove unread private members
+dotnet_diagnostic.IDE0059.severity = warning # Unnecessary assignment of a value
+dotnet_diagnostic.IDE0060.severity = warning # Remove unused parameter
+dotnet_diagnostic.IDE0079.severity = warning # Remove unnecessary code suppression
+dotnet_diagnostic.IDE0080.severity = warning # Remove unnecessary suppression operator
+dotnet_diagnostic.IDE0100.severity = warning # Remove redundant equality check
+dotnet_diagnostic.IDE0110.severity = warning # Remove redundant pattern matching
+
+# ==============================================================================
+# 2. MODERN LANGUAGE CONVENTIONS
+# (These surface as 3 dots under tokens in VS by default)
+# ==============================================================================
+dotnet_diagnostic.IDE0007.severity = warning # Use 'var' (VS defaults to var for apparent types)
+dotnet_diagnostic.IDE0016.severity = warning # Use throw expression
+dotnet_diagnostic.IDE0017.severity = warning # Simplify object initialization
+dotnet_diagnostic.IDE0018.severity = warning # Inline variable declaration
+dotnet_diagnostic.IDE0019.severity = warning # Use pattern matching (as/null)
+dotnet_diagnostic.IDE0020.severity = warning # Use pattern matching (is/cast)
+dotnet_diagnostic.IDE0028.severity = warning # Simplify collection initialization
+dotnet_diagnostic.IDE0029.severity = warning # Use coalesce expression
+dotnet_diagnostic.IDE0030.severity = warning # Use coalesce expression (nullable)
+dotnet_diagnostic.IDE0031.severity = warning # Use null propagation
+dotnet_diagnostic.IDE0032.severity = warning # Use auto-implemented property
+dotnet_diagnostic.IDE0034.severity = warning # Simplify 'default' expression
+dotnet_diagnostic.IDE0039.severity = warning # Use local function instead of lambda
+dotnet_diagnostic.IDE0041.severity = warning # Use 'is null' check
+dotnet_diagnostic.IDE0042.severity = warning # Deconstruct variable declaration
+dotnet_diagnostic.IDE0045.severity = warning # Use conditional expression for assignment
+dotnet_diagnostic.IDE0046.severity = warning # Use conditional expression for return
+dotnet_diagnostic.IDE0054.severity = warning # Use compound assignment
+dotnet_diagnostic.IDE0056.severity = warning # Use index operator
+dotnet_diagnostic.IDE0057.severity = warning # Use range operator
+dotnet_diagnostic.IDE0062.severity = warning # Make local function static
+dotnet_diagnostic.IDE0063.severity = warning # Use simple 'using' statement
+dotnet_diagnostic.IDE0066.severity = warning # Convert switch statement to expression
+dotnet_diagnostic.IDE0074.severity = warning # Use compound coalesce assignment
+dotnet_diagnostic.IDE0075.severity = warning # Simplify conditional expression
+dotnet_diagnostic.IDE0078.severity = warning # Use pattern matching
+dotnet_diagnostic.IDE0082.severity = warning # Convert typeof to nameof
+dotnet_diagnostic.IDE0083.severity = warning # Use pattern matching (not)
+dotnet_diagnostic.IDE0090.severity = warning # Use target-typed new()
+dotnet_diagnostic.IDE0120.severity = warning # Simplify LINQ expression
+dotnet_diagnostic.IDE0150.severity = warning # Prefer 'null' check over type pattern
+dotnet_diagnostic.IDE0161.severity = warning # Convert to file-scoped namespace
+dotnet_diagnostic.IDE0170.severity = warning # Simplify property pattern
+dotnet_diagnostic.IDE0180.severity = warning # Use tuple to swap values
+dotnet_diagnostic.IDE0200.severity = warning # Remove unnecessary lambda parameter types
+dotnet_diagnostic.IDE0290.severity = warning # Use primary constructor
+dotnet_diagnostic.IDE0300.severity = warning # Use collection expression
+dotnet_diagnostic.IDE0301.severity = warning # Use collection expression for empty
+dotnet_diagnostic.IDE0305.severity = warning # Use collection expression instead of fluent
+
+# ==============================================================================
+# 3. MODIFIERS & READABILITY
+# (These surface as 3 dots in VS by default)
+# ==============================================================================
+dotnet_diagnostic.IDE0003.severity = warning # Remove unnecessary 'this.' qualification
+dotnet_diagnostic.IDE0036.severity = warning # Order modifiers
+dotnet_diagnostic.IDE0040.severity = warning # Add explicit accessibility modifiers
+dotnet_diagnostic.IDE0044.severity = warning # Make field readonly
+dotnet_diagnostic.IDE0049.severity = warning # Simplify names (prefer language keywords)
+dotnet_diagnostic.IDE0064.severity = warning # Make struct fields readonly
+dotnet_diagnostic.IDE0065.severity = warning # Place using directives correctly
+dotnet_diagnostic.IDE0070.severity = warning # Use System.HashCode
+dotnet_diagnostic.IDE0071.severity = warning # Simplify string interpolation
+dotnet_diagnostic.IDE0130.severity = warning # Namespace does not match folder structure
+
+# ==============================================================================
+# 4. TARGETED CA RULE ELEVATIONS
+# (Your established baseline)
+# ==============================================================================
+dotnet_analyzer_diagnostic.category-Design.severity = warning
+dotnet_analyzer_diagnostic.category-Maintainability.severity = warning
+dotnet_analyzer_diagnostic.category-Performance.severity = warning
+dotnet_analyzer_diagnostic.category-Reliability.severity = warning
+dotnet_analyzer_diagnostic.category-Security.severity = warning
+dotnet_analyzer_diagnostic.category-Usage.severity = warning
+
+# Suppress missing XML comment warnings on public APIs
+dotnet_diagnostic.CS1591.severity = none

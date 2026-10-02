@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AssemblyName>Pfn</AssemblyName>
+    <RootNamespace>PfnUseDump</RootNamespace>
+    <Description>RAMMap-style physical page use counts via Superfetch PFN query.</Description>
+
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+
+    <AnalysisModeDesign>All</AnalysisModeDesign>
+    <AnalysisModeMaintainability>All</AnalysisModeMaintainability>
+    <AnalysisModeReliability>Recommended</AnalysisModeReliability>
+    <AnalysisModeSecurity>Recommended</AnalysisModeSecurity>
+    <AnalysisModeUsage>Recommended</AnalysisModeUsage>
+    <AnalysisModePerformance>Recommended</AnalysisModePerformance>
+  </PropertyGroup>
+</Project>
