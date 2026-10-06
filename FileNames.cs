@@ -10,6 +10,7 @@
 
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace PfnUseDump;
 
@@ -453,7 +454,7 @@ internal sealed class LineCounter(int width)
 /// <summary>Pass-through writer that feeds a <see cref="LineCounter"/>.</summary>
 internal sealed class CountingWriter(TextWriter inner, LineCounter counter) : TextWriter
 {
-    public override System.Text.Encoding Encoding => inner.Encoding;
+    public override Encoding Encoding => inner.Encoding;
 
     public override void Write(char value)
     {
