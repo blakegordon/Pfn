@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 
@@ -38,14 +39,9 @@ internal static unsafe partial class FileNames
     private const int ErrorInvalidParameter = 87;
     private const int ErrorCancelled = 1223;
 
-    // EVENT_TRACE_PROPERTIES (x64) is 120 bytes; names follow it in our buffer.
-    private const int PropsSize = 120;
-    private const int LoggerNameBytes = 1024;
-    private const int LogFileNameBytes = 2048;
-    private const int PropsTotal = PropsSize + LoggerNameBytes + LogFileNameBytes;
-
-    // EVENT_TRACE_LOGFILEW (x64) is 448 bytes.
-    private const int LogFileStructSize = 448;
+    // sizeof(EVENT_TRACE_PROPERTIES) on x64: the fields of TraceProperties
+    // before its two name buffers.
+    private const uint EventTracePropertiesSize = 120;
 
     // Session buffers: 1 MB each (the documented maximum), 64 preallocated,
     // growing on demand to 256 (~256 MB of nonpaged pool, only while the
@@ -128,73 +124,68 @@ internal static unsafe partial class FileNames
         string loggerName, Guid sessionGuid, bool systemLogger, string etlPath, out RundownStats stats)
     {
         stats = default;
-        IntPtr props = Marshal.AllocHGlobal(PropsTotal);
-        try
+        var props = RundownSessionSettings(sessionGuid, systemLogger, etlPath);
+        int err = StartTraceW(out ulong handle, loggerName, &props);
+
+        if (err == ErrorAlreadyExists && systemLogger)
         {
-            InitProperties(props, sessionGuid, systemLogger, etlPath);
-            int err = StartTraceW(out ulong handle, loggerName, props);
+            // A stale session with our (PID-unique) name: stop it and retry.
+            props = RundownSessionSettings(sessionGuid, systemLogger, etlPath);
+            _ = ControlTraceW(0, loggerName, &props, EventTraceControlStop);
+            props = RundownSessionSettings(sessionGuid, systemLogger, etlPath);
+            err = StartTraceW(out handle, loggerName, &props);
+        }
 
-            if (err == ErrorAlreadyExists && systemLogger)
-            {
-                // A stale session with our (PID-unique) name: stop it and retry.
-                InitProperties(props, sessionGuid, systemLogger, etlPath);
-                _ = ControlTraceW(0, loggerName, props, EventTraceControlStop);
-                InitProperties(props, sessionGuid, systemLogger, etlPath);
-                err = StartTraceW(out handle, loggerName, props);
-            }
-
-            if (err != ErrorSuccess)
-                return err;
-
-            // Stopping the session is what triggers the FileRundown events.
-            // On return, ControlTrace fills in the final session statistics.
-            InitProperties(props, sessionGuid, systemLogger, etlPath);
-            err = ControlTraceW(handle, null, props, EventTraceControlStop);
-            if (err == ErrorSuccess)
-            {
-                byte* b = (byte*)props;
-                stats = new RundownStats(
-                    EventsLost: *(uint*)(b + 88),
-                    BuffersWritten: *(uint*)(b + 92),
-                    LogBuffersLost: *(uint*)(b + 96),
-                    BufferSizeKB: *(uint*)(b + 48),
-                    MaximumBuffers: *(uint*)(b + 56),
-                    NamesCollected: 0,
-                    Session: "");
-            }
+        if (err != ErrorSuccess)
             return err;
-        }
-        finally
+
+        // Stopping the session is what triggers the FileRundown events.
+        // On return, ControlTrace fills in the final session statistics.
+        props = RundownSessionSettings(sessionGuid, systemLogger, etlPath);
+        err = ControlTraceW(handle, null, &props, EventTraceControlStop);
+        if (err == ErrorSuccess)
         {
-            Marshal.FreeHGlobal(props);
+            stats = new RundownStats(
+                EventsLost: props.EventsLost,
+                BuffersWritten: props.BuffersWritten,
+                LogBuffersLost: props.LogBuffersLost,
+                BufferSizeKB: props.BufferSize,
+                MaximumBuffers: props.MaximumBuffers,
+                NamesCollected: 0,
+                Session: "");
         }
+        return err;
     }
 
-    private static void InitProperties(IntPtr p, Guid sessionGuid, bool systemLogger, string etlPath)
+    /// <summary>
+    /// Settings for the kernel ETW session that produces the file rundown:
+    /// buffers, flags, and the .etl path.
+    /// StartTrace and ControlTrace write back into the struct, so callers build
+    /// a fresh one for each call.
+    /// </summary>
+    private static TraceProperties RundownSessionSettings(Guid sessionGuid, bool systemLogger, string etlPath)
     {
-        new Span<byte>((void*)p, PropsTotal).Clear();
-        byte* b = (byte*)p;
+        var p = new TraceProperties
+        {
+            WnodeBufferSize = (uint)sizeof(TraceProperties),
+            Guid = sessionGuid,
+            ClientContext = 1, // QPC timestamps
+            WnodeFlags = WnodeFlagTracedGuid,
 
-        // WNODE_HEADER
-        *(uint*)(b + 0) = PropsTotal;                    // BufferSize
-        *(Guid*)(b + 24) = sessionGuid;                  // Guid
-        *(uint*)(b + 40) = 1;                            // ClientContext = QPC
-        *(uint*)(b + 44) = WnodeFlagTracedGuid;          // Flags
-
-        // The rundown emits one event per file object (600k+ on a large-cache
-        // machine) in a single burst at session stop. Give the logger enough
-        // buffer space to absorb it while the file writer catches up; buffers
-        // are only allocated on demand, up to MaximumBuffers.
-        *(uint*)(b + 48) = EtwBufferSizeKB;              // BufferSize (KB)
-        *(uint*)(b + 52) = EtwMinimumBuffers;            // MinimumBuffers
-        *(uint*)(b + 56) = EtwMaximumBuffers;            // MaximumBuffers
-        *(uint*)(b + 64) = EventTraceFileModeSequential | (systemLogger ? EventTraceSystemLoggerMode : 0); // LogFileMode
-        *(uint*)(b + 72) = EventTraceFlagDiskIo | EventTraceFlagDiskFileIo; // EnableFlags
-        *(uint*)(b + 112) = PropsSize + LoggerNameBytes; // LogFileNameOffset
-        *(uint*)(b + 116) = PropsSize;                   // LoggerNameOffset
-
-        var dst = new Span<char>(b + PropsSize + LoggerNameBytes, LogFileNameBytes / 2 - 1);
-        etlPath.AsSpan(0, Math.Min(etlPath.Length, dst.Length)).CopyTo(dst);
+            // The rundown emits one event per file object (600k+ on a large-cache
+            // machine) in a single burst at session stop. Give the logger enough
+            // buffer space to absorb it while the file writer catches up; buffers
+            // are only allocated on demand, up to MaximumBuffers.
+            BufferSize = EtwBufferSizeKB,
+            MinimumBuffers = EtwMinimumBuffers,
+            MaximumBuffers = EtwMaximumBuffers,
+            LogFileMode = EventTraceFileModeSequential | (systemLogger ? EventTraceSystemLoggerMode : 0),
+            EnableFlags = EventTraceFlagDiskIo | EventTraceFlagDiskFileIo,
+            LoggerNameOffset = EventTracePropertiesSize,
+            LogFileNameOffset = EventTracePropertiesSize + (uint)sizeof(NameBuffer),
+        };
+        etlPath.AsSpan(0, Math.Min(etlPath.Length, NameBuffer.Length - 1)).CopyTo(p.LogFileName);
+        return p;
     }
 
     private static Dictionary<ulong, string> ReadRundown(string etlPath)
@@ -203,23 +194,23 @@ internal static unsafe partial class FileNames
         s_names = names;
         s_callbackFailure = null;
 
-        IntPtr logFile = Marshal.AllocHGlobal(LogFileStructSize);
         IntPtr pathPtr = Marshal.StringToHGlobalUni(etlPath);
         try
         {
-            new Span<byte>((void*)logFile, LogFileStructSize).Clear();
-            byte* b = (byte*)logFile;
-            *(IntPtr*)(b + 0) = pathPtr;                               // LogFileName
-            *(uint*)(b + 28) = ProcessTraceModeEventRecord;            // ProcessTraceMode
-            *(IntPtr*)(b + 424) = (IntPtr)(delegate* unmanaged<IntPtr, void>)&OnEvent; // EventRecordCallback
+            var logFile = new TraceLogFile
+            {
+                LogFileName = pathPtr,
+                ProcessTraceMode = ProcessTraceModeEventRecord,
+                EventRecordCallback = &OnEvent,
+            };
 
-            ulong h = OpenTraceW(logFile);
+            ulong h = OpenTraceW(ref logFile);
             if (h == InvalidProcessTraceHandle)
                 throw new InvalidOperationException(
                     $"OpenTrace on {etlPath} failed: {Marshal.GetLastPInvokeError()}");
             try
             {
-                int err = ProcessTrace(&h, 1, IntPtr.Zero, IntPtr.Zero);
+                int err = ProcessTrace(ref h, 1, IntPtr.Zero, IntPtr.Zero);
                 // OnEvent (invoked by ProcessTrace) may have stashed a failure.
                 Interlocked.Exchange(ref s_callbackFailure, null)?.Throw();
                 if (err is not (ErrorSuccess or ErrorCancelled))
@@ -233,7 +224,6 @@ internal static unsafe partial class FileNames
         finally
         {
             Marshal.FreeHGlobal(pathPtr);
-            Marshal.FreeHGlobal(logFile);
             s_names = null;
             s_callbackFailure = null;
         }
@@ -250,7 +240,7 @@ internal static unsafe partial class FileNames
     // catch anyway.) The first failure is stashed and rethrown by ReadRundown
     // once ProcessTrace returns; later events are ignored.
     [UnmanagedCallersOnly]
-    private static void OnEvent(IntPtr record)
+    private static void OnEvent(EventRecord* record)
     {
         var names = s_names;
         if (names is null || s_callbackFailure is not null)
@@ -258,28 +248,21 @@ internal static unsafe partial class FileNames
 
         try
         {
-            // EVENT_RECORD (x64):
-            //   +0x00 EVENT_HEADER (80): Flags @4, ProviderId @24, Opcode @45
-            //   +0x56 UserDataLength (USHORT)
-            //   +0x60 UserData (PVOID)
-            byte* r = (byte*)record;
-            ushort flags = *(ushort*)(r + 4);
-            Guid provider = *(Guid*)(r + 24);
-            byte opcode = *(r + 45);
-            if (provider != FileIoGuid)
+            EventRecord e = *record;
+            if (e.ProviderId != FileIoGuid)
                 return;
-            if (opcode is not (OpcodeName or OpcodeFileCreate or OpcodeFileRundown))
+            if (e.Opcode is not (OpcodeName or OpcodeFileCreate or OpcodeFileRundown))
                 return;
 
-            int len = *(ushort*)(r + 86);
-            byte* data = *(byte**)(r + 96);
-            int ptrSize = (flags & EventHeaderFlag32BitHeader) != 0 ? 4 : 8;
-            if (data == null || len <= ptrSize)
+            // The event data is the file-object key (pointer-sized), then the
+            // NUL-terminated UTF-16 path.
+            int keySize = (e.Flags & EventHeaderFlag32BitHeader) != 0 ? 4 : 8;
+            if (e.UserData == null || e.UserDataLength <= keySize)
                 return;
+            var data = new ReadOnlySpan<byte>(e.UserData, e.UserDataLength);
 
-            ulong key = ptrSize == 8 ? *(ulong*)data : *(uint*)data;
-            int chars = (len - ptrSize) / 2;
-            var span = new ReadOnlySpan<char>(data + ptrSize, chars);
+            ulong key = keySize == 8 ? MemoryMarshal.Read<ulong>(data) : MemoryMarshal.Read<uint>(data);
+            var span = MemoryMarshal.Cast<byte, char>(data[keySize..]);
             int nul = span.IndexOf('\0');
             if (nul >= 0)
                 span = span[..nul];
@@ -288,7 +271,7 @@ internal static unsafe partial class FileNames
 
             // Rundown is authoritative; don't let an older Name event override it.
             ulong norm = NormalizeKey(key);
-            if (opcode == OpcodeFileRundown || !names.ContainsKey(norm))
+            if (e.Opcode == OpcodeFileRundown || !names.ContainsKey(norm))
                 names[norm] = span.ToString();
         }
         catch (Exception ex) when (ex is OutOfMemoryException or InvalidOperationException)
@@ -333,20 +316,111 @@ internal static unsafe partial class FileNames
     }
 
     [LibraryImport("advapi32.dll", EntryPoint = "StartTraceW", StringMarshalling = StringMarshalling.Utf16)]
-    private static partial int StartTraceW(out ulong traceHandle, string instanceName, IntPtr properties);
+    private static partial int StartTraceW(out ulong traceHandle, string instanceName, TraceProperties* properties);
 
     [LibraryImport("advapi32.dll", EntryPoint = "ControlTraceW", StringMarshalling = StringMarshalling.Utf16)]
-    private static partial int ControlTraceW(ulong traceHandle, string? instanceName, IntPtr properties, uint controlCode);
+    private static partial int ControlTraceW(ulong traceHandle, string? instanceName, TraceProperties* properties, uint controlCode);
 
     [LibraryImport("advapi32.dll", EntryPoint = "OpenTraceW", SetLastError = true)]
-    private static partial ulong OpenTraceW(IntPtr logfile);
+    private static partial ulong OpenTraceW(ref TraceLogFile logfile);
 
     [LibraryImport("advapi32.dll")]
-    private static partial int ProcessTrace(ulong* handleArray, uint handleCount, IntPtr startTime, IntPtr endTime);
+    private static partial int ProcessTrace(ref ulong handleArray, uint handleCount, IntPtr startTime, IntPtr endTime);
 
     [LibraryImport("advapi32.dll")]
     private static partial int CloseTrace(ulong traceHandle);
 
     [LibraryImport("kernel32.dll", EntryPoint = "QueryDosDeviceW", StringMarshalling = StringMarshalling.Utf16)]
     private static partial uint QueryDosDeviceW(string lpDeviceName, [Out] char[] lpTargetPath, uint ucchMax);
+
+    /// <summary>
+    /// EVENT_TRACE_PROPERTIES (with its WNODE_HEADER flattened in), followed by
+    /// room for the logger name and log file name that the API expects to find
+    /// at LoggerNameOffset and LogFileNameOffset.
+    /// </summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TraceProperties
+    {
+        public uint WnodeBufferSize;
+        public uint ProviderId;
+        public ulong HistoricalContext;
+        public long TimeStamp;
+        public Guid Guid;
+        public uint ClientContext;
+        public uint WnodeFlags;
+        public uint BufferSize;
+        public uint MinimumBuffers;
+        public uint MaximumBuffers;
+        public uint MaximumFileSize;
+        public uint LogFileMode;
+        public uint FlushTimer;
+        public uint EnableFlags;
+        public int AgeLimit;
+        public uint NumberOfBuffers;
+        public uint FreeBuffers;
+        public uint EventsLost;
+        public uint BuffersWritten;
+        public uint LogBuffersLost;
+        public uint RealTimeBuffersLost;
+        public IntPtr LoggerThreadId;
+        public uint LogFileNameOffset;
+        public uint LoggerNameOffset;
+        public NameBuffer LoggerName;
+        public NameBuffer LogFileName;
+    }
+
+    [InlineArray(Length)]
+    private struct NameBuffer
+    {
+        public const int Length = 1024;
+        private char _first;
+    }
+
+    /// <summary>EVENT_TRACE_LOGFILEW, naming only the fields we set.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct TraceLogFile
+    {
+        public IntPtr LogFileName;
+        public IntPtr LoggerName;
+        public long CurrentTime;
+        public uint BuffersRead;
+        public uint ProcessTraceMode;
+        private fixed byte _currentEventAndLogfileHeader[88 + 280]; // EVENT_TRACE, TRACE_LOGFILE_HEADER
+        public IntPtr BufferCallback;
+        public uint BufferSize;
+        public uint Filled;
+        public uint EventsLost;
+        public delegate* unmanaged<EventRecord*, void> EventRecordCallback;
+        public uint IsKernelTrace;
+        public IntPtr Context;
+    }
+
+    /// <summary>EVENT_RECORD, with its EVENT_HEADER and EVENT_DESCRIPTOR flattened in.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct EventRecord
+    {
+        public ushort Size;
+        public ushort HeaderType;
+        public ushort Flags;
+        public ushort EventProperty;
+        public uint ThreadId;
+        public uint ProcessId;
+        public long TimeStamp;
+        public Guid ProviderId;
+        public ushort Id;
+        public byte Version;
+        public byte Channel;
+        public byte Level;
+        public byte Opcode;
+        public ushort Task;
+        public ulong Keyword;
+        public ulong ProcessorTime;
+        public Guid ActivityId;
+        public uint BufferContext;
+        public ushort ExtendedDataCount;
+        public ushort UserDataLength;
+        public IntPtr ExtendedData;
+        public byte* UserData;
+        public IntPtr UserContext;
+    }
 }

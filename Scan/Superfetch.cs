@@ -1,4 +1,5 @@
 using PfnUseDump.NameResolution;
+using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 namespace PfnUseDump.Scan;
@@ -21,15 +22,13 @@ internal static partial class Superfetch
 
     private const uint SeProfileSingleProcessPrivilege = 13;
 
-    // PF_PFN_PRIO_REQUEST (x64):
-    //   +0x00 ULONG Version
-    //   +0x04 ULONG RequestFlags
-    //   +0x08 SIZE_T PfnCount
-    //   +0x10 SYSTEM_MEMORY_LIST_INFORMATION (22 * 8 = 176)
-    //   +0xC0 MMPFN_IDENTITY PageData[]
-    internal const int PfnRequestHeader = 0xC0;
-    internal const int MmpfnIdentitySize = 24;
-    internal const int BatchPages = 16_384;
+    private const uint QueryMemoryList = 1;
+
+    // A PFN query request is a PfnRequestHeader, then the 176-byte
+    // SYSTEM_MEMORY_LIST_INFORMATION (which we don't read), then the
+    // MmpfnIdentity array that the kernel fills in.
+    private const int PfnPagesOffset = 0xC0;
+    private const int BatchPages = 16_384;
 
     // MMPFN_IDENTITY.u1.e1.UseDescription is the low 4 bits.
     // ListDescription is the next 3 bits.
@@ -93,11 +92,13 @@ internal static partial class Superfetch
         }
     }
 
-    private static PhysRange[] QueryRangesVersion(int version)
+    private static PhysRange[] QueryRangesVersion(uint version)
     {
-        uint probe = (uint)(version == 2 ? 24 : 16);
-        byte[] buf = new byte[probe];
-        WriteUInt32(buf, 0, (uint)version);
+        // V1 reply header: ULONG Version, ULONG RangeCount.
+        // V2 reply header: ULONG Version, ULONG Flags, SIZE_T RangeCount.
+        int headerSize = version == 2 ? 16 : 8;
+        byte[] buf = new byte[headerSize + 8];
+        BitConverter.TryWriteBytes(buf, version);
 
         int status = Query(SuperfetchMemoryRangesQuery, buf, out uint needed);
         if (status is StatusBufferTooSmall or StatusInfoLengthMismatch)
@@ -105,7 +106,7 @@ internal static partial class Superfetch
             if (needed < 32)
                 needed = 4096;
             buf = new byte[needed];
-            WriteUInt32(buf, 0, (uint)version);
+            BitConverter.TryWriteBytes(buf, version);
             status = Query(SuperfetchMemoryRangesQuery, buf, out _);
         }
 
@@ -113,30 +114,12 @@ internal static partial class Superfetch
             throw new InvalidOperationException(
                 $"SuperfetchMemoryRangesQuery v{version} failed: 0x{status:X8}");
 
-        uint rangeCount;
-        int offset;
-        if (version == 2)
-        {
-            // ULONG Version, ULONG Flags, SIZE_T RangeCount
-            rangeCount = (uint)ReadUIntPtr(buf, 8);
-            offset = 16;
-        }
-        else
-        {
-            rangeCount = ReadUInt32(buf, 4);
-            offset = 8;
-        }
+        int rangeCount = version == 2
+            ? (int)BitConverter.ToUInt64(buf, 8)
+            : (int)BitConverter.ToUInt32(buf, 4);
 
-        var ranges = new PhysRange[rangeCount];
-        for (uint i = 0; i < rangeCount; i++)
-        {
-            ulong basePfn = ReadUIntPtr(buf, offset);
-            ulong pages = ReadUIntPtr(buf, offset + 8);
-            ranges[i] = new PhysRange(basePfn, pages);
-            offset += 16;
-        }
-
-        return ranges;
+        // The ranges follow the header, laid out exactly like PhysRange.
+        return MemoryMarshal.Cast<byte, PhysRange>(buf.AsSpan(headerSize))[..rangeCount].ToArray();
     }
 
     public static void Classify(
@@ -146,8 +129,7 @@ internal static partial class Superfetch
         Dictionary<ulong, ulong[]>? files,
         Action<ulong, ulong>? progress)
     {
-        int capacity = PfnRequestHeader + MmpfnIdentitySize * BatchPages;
-        byte[] req = new byte[capacity];
+        byte[] req = new byte[PfnPagesOffset + Unsafe.SizeOf<MmpfnIdentity>() * BatchPages];
 
         ulong done = 0;
         ulong total = 0;
@@ -162,40 +144,31 @@ internal static partial class Superfetch
             {
                 int batch = (int)Math.Min(remaining, BatchPages);
                 Array.Clear(req);
-                WriteUInt32(req, 0, 1);                         // Version
-                WriteUInt32(req, 4, 1);                         // RequestFlags = QUERY_MEMORY_LIST
-                WriteUIntPtr(req, 8, (ulong)batch);             // PfnCount
+                var header = new PfnRequestHeader { Version = 1, RequestFlags = QueryMemoryList, PfnCount = (ulong)batch };
+                MemoryMarshal.Write(req, in header);
 
-                int ident = PfnRequestHeader;
+                Span<MmpfnIdentity> pages = MemoryMarshal.Cast<byte, MmpfnIdentity>(req.AsSpan(PfnPagesOffset))[..batch];
                 for (int i = 0; i < batch; i++)
-                {
-                    // MMPFN_IDENTITY: u1 (8), PageFrameIndex (8), u2 (8)
-                    WriteUIntPtr(req, ident + 8, pfn + (ulong)i);
-                    ident += MmpfnIdentitySize;
-                }
+                    pages[i].PageFrameIndex = pfn + (ulong)i;
 
                 int status = Query(SuperfetchPfnQuery, req, out _);
                 if (status < 0)
                     throw new InvalidOperationException(
                         $"SuperfetchPfnQuery failed: 0x{status:X8} (PFN 0x{pfn:X})");
 
-                ident = PfnRequestHeader;
-                for (int i = 0; i < batch; i++)
+                foreach (MmpfnIdentity page in pages)
                 {
-                    ulong u1 = ReadUIntPtr(req, ident);
-                    int use = (int)(u1 & 0xF);
-                    int list = (int)((u1 >> 4) & 0x7);
+                    int use = page.UseDescription;
+                    int list = page.ListDescription;
                     if ((uint)use < (uint)useCounts.Length)
                         useCounts[use]++;
                     if ((uint)list < (uint)listCounts.Length)
                         listCounts[list]++;
                     if (files is not null && use is UseMappedFile or UseMetafile)
                     {
-                        // MMPFN_IDENTITY.u2 = FileObject / UniqueFileObjectKey
-                        // (low bits carry flags such as Image).
                         // Counts layout: [list] for Mapped File, then
                         // [ListNames.Length + list] for Metafile.
-                        ulong key = FileNames.NormalizeKey(ReadUIntPtr(req, ident + 16));
+                        ulong key = FileNames.NormalizeKey(page.U2);
                         if (!files.TryGetValue(key, out var counts))
                         {
                             counts = new ulong[ListNames.Length * 2];
@@ -204,7 +177,6 @@ internal static partial class Superfetch
                         if ((uint)list < (uint)ListNames.Length)
                             counts[(use == UseMetafile ? ListNames.Length : 0) + list]++;
                     }
-                    ident += MmpfnIdentitySize;
                 }
 
                 pfn += (ulong)batch;
@@ -228,20 +200,8 @@ internal static partial class Superfetch
                 Data = pin.AddrOfPinnedObject(),
                 Length = (uint)data.Length,
             };
-
-            GCHandle hdr = GCHandle.Alloc(header, GCHandleType.Pinned);
-            try
-            {
-                return NtQuerySystemInformation(
-                    SystemSuperfetchInformation,
-                    hdr.AddrOfPinnedObject(),
-                    (uint)Marshal.SizeOf<SuperfetchHeader>(),
-                    out returnLength);
-            }
-            finally
-            {
-                hdr.Free();
-            }
+            return NtQuerySystemInformation(
+                SystemSuperfetchInformation, ref header, (uint)Unsafe.SizeOf<SuperfetchHeader>(), out returnLength);
         }
         finally
         {
@@ -259,20 +219,34 @@ internal static partial class Superfetch
         public uint Length;
     }
 
-    private static void WriteUInt32(byte[] b, int o, uint v) =>
-        BitConverter.TryWriteBytes(b.AsSpan(o, 4), v);
+    /// <summary>PF_PFN_PRIO_REQUEST, up to (not including) its memory-list statistics.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct PfnRequestHeader
+    {
+        public uint Version;
+        public uint RequestFlags;
+        public ulong PfnCount;
+    }
 
-    private static void WriteUIntPtr(byte[] b, int o, ulong v) =>
-        BitConverter.TryWriteBytes(b.AsSpan(o, 8), v);
+    /// <summary>MMPFN_IDENTITY: we fill in PageFrameIndex; the kernel fills in U1 and U2.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MmpfnIdentity
+    {
+        public ulong U1;
+        public ulong PageFrameIndex;
 
-    private static uint ReadUInt32(byte[] b, int o) => BitConverter.ToUInt32(b, o);
+        /// <summary>For file pages, the file object key (low bits carry flags such as Image).</summary>
+        public ulong U2;
 
-    private static ulong ReadUIntPtr(byte[] b, int o) => BitConverter.ToUInt64(b, o);
+        public readonly int UseDescription => (int)(U1 & 0xF);
+
+        public readonly int ListDescription => (int)((U1 >> 4) & 0x7);
+    }
 
     [LibraryImport("ntdll.dll")]
     private static partial int NtQuerySystemInformation(
         int systemInformationClass,
-        IntPtr systemInformation,
+        ref SuperfetchHeader systemInformation,
         uint systemInformationLength,
         out uint returnLength);
 
