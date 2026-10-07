@@ -37,9 +37,13 @@ jobs:
       with:
         dotnet-version: '10.0.x'
 
+    - name: Restore dependencies
+      # Explicitly isolate the restore step and force maximum diagnostic logging
+      run: dotnet restore PfnUseDump.csproj -v diag
+
     - name: Publish application
-      # Directly targets the project file and enables normal verbosity for clear error output
-      run: dotnet publish PfnUseDump.csproj -c Release -r win-x64 --self-contained false -o .\output -v n
+      # Publish using the explicit restore we just did above
+      run: dotnet publish PfnUseDump.csproj -c Release -r win-x64 --self-contained false --no-restore -o .\output
 
     - name: Create versioned ZIP archive
       run: |
