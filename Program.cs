@@ -1,3 +1,12 @@
+using PfnUseDump.NameResolution;
+using PfnUseDump.Report;
+using PfnUseDump.Scan;
+using PfnUseDump.Terminal;
+using System.ComponentModel;
+using System.Security;
+
+namespace PfnUseDump;
+
 // Pfn — RAMMap-style physical page use counts from the command line.
 //
 // Walks physical ranges (SuperfetchMemoryRangesQuery) then classifies each
@@ -13,16 +22,6 @@
 //   Pfn --files          (per-file RAM use, clipped to the console window)
 //   Pfn --files --all    (every file)
 //   Pfn --most           (every file that prints as at least 0.001 GiB)
-
-using PfnUseDump.NameResolution;
-using PfnUseDump.Report;
-using PfnUseDump.Scan;
-using PfnUseDump.Terminal;
-using System.ComponentModel;
-using System.Security;
-
-namespace PfnUseDump;
-
 internal static class Program
 {
     private static int Main(string[] args)

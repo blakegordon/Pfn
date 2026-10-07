@@ -1,3 +1,8 @@
+using System.Runtime.ExceptionServices;
+using System.Runtime.InteropServices;
+
+namespace PfnUseDump.NameResolution;
+
 // FileNames — resolves the file-object keys that SuperfetchPfnQuery reports for
 // mapped-file / metafile pages into path names.
 //
@@ -7,12 +12,6 @@
 // (opcode 36) for every file object it knows about, carrying the object key and
 // its \Device\HarddiskVolumeN\... path. We log to a temporary .etl file, stop the
 // session, then read the file back.
-
-using System.Runtime.ExceptionServices;
-using System.Runtime.InteropServices;
-
-namespace PfnUseDump.NameResolution;
-
 internal static unsafe partial class FileNames
 {
     // FileIo provider GUID (classic kernel MOF class).
