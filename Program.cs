@@ -45,6 +45,15 @@ internal static class Program
 
             if (!ElevatedRelaunch.IsElevated())
             {
+                // The elevated copy can't inherit our handles; it would write
+                // to the console and leave the redirect target empty.
+                if (Console.IsOutputRedirected)
+                {
+                    Console.Error.WriteLine(
+                        "Administrator elevation is required, and output redirection " +
+                        "does not carry over to the elevated copy. Run from an elevated prompt.");
+                    return 1;
+                }
                 if (!ElevatedRelaunch.TryRelaunch(args, out int elevatedCode))
                 {
                     Console.Error.WriteLine(
