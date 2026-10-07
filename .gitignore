@@ -480,3 +480,5 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+/Report20261006-1714.diagsession
+/Report20261006-1717.diagsession

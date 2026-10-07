@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "PfnUseDump": {
+      "commandName": "Project",
+      "commandLineArgs": "-t -f"
+    }
+  }
+}

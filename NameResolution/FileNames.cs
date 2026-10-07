@@ -10,19 +10,8 @@
 
 using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
-using System.Text;
 
-namespace PfnUseDump;
-
-/// <summary>Final statistics of the file-rundown ETW session (shown by --debug).</summary>
-internal readonly record struct RundownStats(
-    uint EventsLost,
-    uint BuffersWritten,
-    uint LogBuffersLost,
-    uint BufferSizeKB,
-    uint MaximumBuffers,
-    int NamesCollected,
-    string Session);
+namespace PfnUseDump.NameResolution;
 
 internal static unsafe partial class FileNames
 {
@@ -200,8 +189,7 @@ internal static unsafe partial class FileNames
         *(uint*)(b + 48) = EtwBufferSizeKB;              // BufferSize (KB)
         *(uint*)(b + 52) = EtwMinimumBuffers;            // MinimumBuffers
         *(uint*)(b + 56) = EtwMaximumBuffers;            // MaximumBuffers
-        *(uint*)(b + 64) = EventTraceFileModeSequential |
-                           (systemLogger ? EventTraceSystemLoggerMode : 0); // LogFileMode
+        *(uint*)(b + 64) = EventTraceFileModeSequential | (systemLogger ? EventTraceSystemLoggerMode : 0); // LogFileMode
         *(uint*)(b + 72) = EventTraceFlagDiskIo | EventTraceFlagDiskFileIo; // EnableFlags
         *(uint*)(b + 112) = PropsSize + LoggerNameBytes; // LogFileNameOffset
         *(uint*)(b + 116) = PropsSize;                   // LoggerNameOffset
@@ -362,139 +350,4 @@ internal static unsafe partial class FileNames
 
     [LibraryImport("kernel32.dll", EntryPoint = "QueryDosDeviceW", StringMarshalling = StringMarshalling.Utf16)]
     private static partial uint QueryDosDeviceW(string lpDeviceName, [Out] char[] lpTargetPath, uint ucchMax);
-}
-
-/// <summary>Console window geometry, queried directly from CONOUT$.</summary>
-internal static partial class ConsoleWindow
-{
-    [StructLayout(LayoutKind.Sequential)]
-    private struct ConsoleScreenBufferInfo
-    {
-        public short SizeX, SizeY;
-        public short CursorX, CursorY;
-        public ushort Attributes;
-        public short Left, Top, Right, Bottom;
-        public short MaxX, MaxY;
-    }
-
-    private const int StdOutputHandle = -11;
-    private const uint FileTypeChar = 0x0002;
-
-    /// <summary>
-    /// Visible console rows and columns, or null if stdout is not a console
-    /// (redirected to a file or pipe), in which case output should not be truncated.
-    /// </summary>
-    public static (int Rows, int Columns)? VisibleSize()
-    {
-        IntPtr h = GetStdHandle(StdOutputHandle);
-        return h != IntPtr.Zero
-            && h != new IntPtr(-1)
-            && GetFileType(h) == FileTypeChar
-            && GetConsoleScreenBufferInfo(h, out var info)
-            ? (info.Bottom - info.Top + 1, info.Right - info.Left + 1)
-            : null;
-    }
-
-    [LibraryImport("kernel32.dll")]
-    private static partial IntPtr GetStdHandle(int nStdHandle);
-
-    [LibraryImport("kernel32.dll")]
-    private static partial uint GetFileType(IntPtr hFile);
-
-    [LibraryImport("kernel32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool GetConsoleScreenBufferInfo(IntPtr hConsoleOutput, out ConsoleScreenBufferInfo info);
-}
-
-/// <summary>
-/// Tracks how many console rows our own output has consumed (stdout and
-/// stderr both land on the same console), including soft wraps at the
-/// window width, so the file table can be sized to fit what's left.
-/// </summary>
-internal sealed class LineCounter(int width)
-{
-    private int _column;
-
-    public int Width { get; } = Math.Max(1, width);
-
-    public int Lines { get; private set; }
-
-    /// <summary>Rows used so far, counting a partially written line.</summary>
-    public int RowsUsed => Lines + (_column > 0 ? 1 : 0);
-
-    public void Count(ReadOnlySpan<char> s)
-    {
-        foreach (char ch in s)
-            Count(ch);
-    }
-
-    public void Count(char ch)
-    {
-        switch (ch)
-        {
-            case '\n':
-                Lines++;
-                _column = 0;
-                break;
-            case '\r':
-                _column = 0;
-                break;
-            default:
-                if (_column == Width)
-                {
-                    Lines++;
-                    _column = 0;
-                }
-                _column++;
-                break;
-        }
-    }
-}
-
-/// <summary>Pass-through writer that feeds a <see cref="LineCounter"/>.</summary>
-internal sealed class CountingWriter(TextWriter inner, LineCounter counter) : TextWriter
-{
-    public override Encoding Encoding => inner.Encoding;
-
-    public override void Write(char value)
-    {
-        counter.Count(value);
-        inner.Write(value);
-    }
-
-    public override void Write(string? value)
-    {
-        if (value is null)
-            return;
-        counter.Count(value);
-        inner.Write(value);
-    }
-
-    public override void Write(char[] buffer, int index, int count)
-    {
-        counter.Count(buffer.AsSpan(index, count));
-        inner.Write(buffer, index, count);
-    }
-
-    public override void Write(ReadOnlySpan<char> buffer)
-    {
-        counter.Count(buffer);
-        inner.Write(buffer);
-    }
-
-    public override void WriteLine()
-    {
-        counter.Count('\n');
-        inner.WriteLine();
-    }
-
-    public override void WriteLine(string? value)
-    {
-        if (value is not null)
-            counter.Count(value);
-        counter.Count('\n');
-        inner.WriteLine(value);
-    }
-
-    public override void Flush() => inner.Flush();
 }
