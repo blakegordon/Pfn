@@ -12,7 +12,7 @@ on:
         default: 'v1.0.0-manual'
 
 permissions:
-  contents: write # Grants the token permission to create releases and upload assets
+  contents: write
 
 jobs:
   release:
@@ -22,32 +22,34 @@ jobs:
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    - name: Determine Version Number
+    - name: Determine Version Numbers
       id: version
       run: |
         if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
-            $VER = '${{ github.event.inputs.manual_version }}'
+            $TAG = '${{ github.event.inputs.manual_version }}'
         } else {
-            $VER = '${{ github.ref_name }}'
+            $TAG = '${{ github.ref_name }}'
         }
-        echo "VERSION=$VER" >> $env:GITHUB_ENV
+        
+        # Strip the 'v' prefix so NuGet doesn't crash (e.g., v1.0.0 -> 1.0.0)
+        $CLEAN_VER = $TAG.TrimStart('v')
+        
+        # Save to safe variable names that won't hijack internal MSBuild properties
+        echo "RELEASE_TAG=$TAG" >> $env:GITHUB_ENV
+        echo "DOTNET_VERSION=$CLEAN_VER" >> $env:GITHUB_ENV
 
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: '10.0.x'
 
-    - name: Restore dependencies
-      # Explicitly isolate the restore step and force maximum diagnostic logging
-      run: dotnet restore PfnUseDump.csproj -v diag
-
     - name: Publish application
-      # Publish using the explicit restore we just did above
-      run: dotnet publish PfnUseDump.csproj -c Release -r win-x64 --self-contained false --no-restore -o .\output
+      # Uses the clean version number to successfully restore packages and stamp the .exe
+      run: dotnet publish PfnUseDump.csproj -c Release -r win-x64 --self-contained false -o .\output -p:Version=${env:DOTNET_VERSION}
 
     - name: Create versioned ZIP archive
       run: |
-        $ZipFileName = "Pfn-${env:VERSION}-win-x64.zip"
+        $ZipFileName = "Pfn-${env:RELEASE_TAG}-win-x64.zip"
         Compress-Archive -Path .\output\* -DestinationPath $ZipFileName
         echo "ZIP_FILE=$ZipFileName" >> $env:GITHUB_ENV
 
@@ -55,5 +57,5 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: ${{ env.ZIP_FILE }}
-        tag_name: ${{ env.VERSION }}
+        tag_name: ${{ env.RELEASE_TAG }}
         generate_release_notes: true
