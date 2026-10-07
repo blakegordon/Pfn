@@ -11,6 +11,9 @@ on:
         required: true
         default: 'v1.0.0-manual'
 
+permissions:
+  contents: write # Grants the token permission to create releases and upload assets
+
 jobs:
   release:
     runs-on: windows-latest
@@ -32,19 +35,16 @@ jobs:
     - name: Setup .NET
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: '10.0.x' # Aligned with your net10.0-windows target
+        dotnet-version: '10.0.x'
 
     - name: Publish application
-      # Compiles an optimized release build for 64-bit Windows
-      run: dotnet publish -c Release -r win-x64 --self-contained false -o .\output
+      # Directly targets the project file and enables normal verbosity for clear error output
+      run: dotnet publish PfnUseDump.csproj -c Release -r win-x64 --self-contained false -o .\output -v n
 
     - name: Create versioned ZIP archive
       run: |
-        # Injects the extracted version tag into the zip filename
         $ZipFileName = "Pfn-${env:VERSION}-win-x64.zip"
         Compress-Archive -Path .\output\* -DestinationPath $ZipFileName
-        
-        # Save the file name to the environment so the next step can find it
         echo "ZIP_FILE=$ZipFileName" >> $env:GITHUB_ENV
 
     - name: Publish GitHub Release
