@@ -32,11 +32,11 @@ Zeroed                 54.893
 Active                 36.663
 Modified                1.279
 
-Total GiB    Active   Standby  Modified  File
-------------------------------------------------------------------
-   60.703     0.000    60.703     0.000  E:\video\movie-4k.mkv
-   36.165     0.000    36.165     0.000  D:\vm\dev-disk.vhdx
-   21.665     0.000    21.665     0.000  E:\models\qwen2.5-32b-instruct-q5_k_m.gguf
+Total GiB   Standby  File
+----------------------------------------------
+   60.703    60.703  E:\video\movie-4k.mkv
+   36.165    36.165  D:\vm\dev-disk.vhdx
+   21.665    21.665  E:\models\qwen2.5-32b-instruct-q5_k_m.gguf
    ...
 ```
 
@@ -62,7 +62,8 @@ The executable is written to `bin\Release\net10.0-windows\Pfn.exe`.
 ## Usage
 
 ```text
-Pfn [--csv=<file>] [--quiet] [--top] [--files [--all] [--most] [--debug]]
+Pfn [--csv=<file>] [--quiet] [--top] [--priority]
+    [--files [--all] [--most] [--live] [--debug]]
 ```
 
 | Switch | Meaning |
@@ -70,9 +71,11 @@ Pfn [--csv=<file>] [--quiet] [--top] [--files [--all] [--most] [--debug]]
 | `--csv=<file>` | Also write the Use and List counts (and, with `--files`, every file) to a CSV file. |
 | `-q`, `--quiet` | Print only the report, with no progress or status lines. |
 | `-t`, `--top` | Omit categories under 1 GiB and sort each table by size, largest first. |
-| `-f`, `--files` | List files with pages in RAM (Active, Standby, Modified), largest first. The list is cut to fit the console window unless `--all` is given or output is redirected. |
+| `-p`, `--priority` | Also show Standby memory by page priority (0-7). When memory runs short, Windows reuses Standby pages lowest priority first. |
+| `-f`, `--files` | List files with pages in RAM (Total and Standby GiB), largest first. Total minus Standby is the file's Active + Modified, and `*` marks a Standby figure that differs from Total; `--csv` has all four counts. The list is cut to fit the console window unless `--all` is given or output is redirected. |
 | `-a`, `--all` | List every file. Implies `--files`. |
 | `-m`, `--most` | Like `--all`, but leave out files that would print as 0.000 GiB. Implies `--all`. |
+| `-l`, `--live` | List only files with Active pages (in use right now, not just cached), showing Total and Active GiB, largest Active first. Implies `--files`. |
 | `-d`, `--debug` | Add a files-in-memory summary, ETW session statistics, and a breakdown of file objects that could not be named. Implies `--files`. |
 | `-h`, `--help` | Show help. |
 

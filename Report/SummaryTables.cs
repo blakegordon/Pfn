@@ -41,15 +41,36 @@ internal static class SummaryTables
         PrintCategoryRows(rows, top);
     }
 
+    /// <summary>
+    /// Standby pages by priority (--priority). Rows stay in priority order,
+    /// even with --top, because that order is what Windows reuses them in.
+    /// </summary>
+    public static void PrintStandbyPriority(ulong[] standbyByPriority, bool top)
+    {
+        Console.WriteLine($"{"Standby priority",-18} {"GiB",10}");
+        Console.WriteLine(Rule);
+
+        var rows = new List<(string Name, ulong Pages, string Suffix)>(standbyByPriority.Length);
+        for (int i = 0; i < standbyByPriority.Length; i++)
+        {
+            string suffix = i == 0 ? "  <== reused first"
+                : i == standbyByPriority.Length - 1 ? "  <== kept longest"
+                : "";
+            rows.Add(($"{i}", standbyByPriority[i], suffix));
+        }
+
+        PrintCategoryRows(rows, top, sortBySize: false);
+    }
+
     private static void PrintCategoryRows(
-        List<(string Name, ulong Pages, string Suffix)> rows, bool top)
+        List<(string Name, ulong Pages, string Suffix)> rows, bool top, bool sortBySize = true)
     {
         IEnumerable<(string Name, ulong Pages, string Suffix)> output = rows;
         if (top)
         {
-            output = rows
-                .Where(r => r.Pages >= Pages.PerGiB)
-                .OrderByDescending(r => r.Pages);
+            output = rows.Where(r => r.Pages >= Pages.PerGiB);
+            if (sortBySize)
+                output = output.OrderByDescending(r => r.Pages);
         }
 
         foreach (var (name, pages, suffix) in output)

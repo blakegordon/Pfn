@@ -3,14 +3,17 @@ using PfnUseDump.Terminal;
 namespace PfnUseDump.Report;
 
 /// <summary>
-/// The "Files in memory" table: per-file Active / Standby / Modified GiB,
-/// fitted to the console window unless --all (or --most) is given.
+/// The "Files in memory" table: per-file Total and Standby GiB (Total and
+/// Active with --live), fitted to the console window unless --all (or
+/// --most) is given. Only two numeric columns, to leave room for long
+/// paths: Total - Standby is the file's Active + Modified, so a gap still
+/// flags live or dirty pages. The CSV report has all four counts.
 /// </summary>
 internal static class FileTable
 {
     // --most omits files that would print as 0.000 GiB. 0.0005 GiB is 131.072
     // pages, so the cut-off is 132 pages (~528 KiB): 131 pages displays as
-    // 0.000, 132 pages as 0.001.
+    // 0.000, 132 pages as 0.001. --live applies the same cut-off to Active.
     private const double MostThresholdGiB = 0.0005;
     private static readonly ulong MostMinPages = (ulong)Math.Ceiling(MostThresholdGiB * Pages.PerGiB);
 
@@ -20,22 +23,32 @@ internal static class FileTable
     /// printed this run. Null with --all / --most or redirected output.
     /// </param>
     /// <param name="most">Omit rows that would print as 0.000 GiB.</param>
+    /// <param name="live">
+    /// List only rows whose Active column would not print as 0.000, sorted
+    /// by Active, largest first.
+    /// </param>
     /// <param name="debug">Precede the table with the files-in-memory summary line.</param>
-    public static void Print(List<FileRow> rows, LineCounter? lineCounter, bool most, bool debug)
+    public static void Print(List<FileRow> rows, LineCounter? lineCounter, bool most, bool live, bool debug)
     {
-        // Rows are sorted largest first, so --most keeps a prefix of the list.
-        int eligible = rows.Count;
-        if (most)
+        // The rows to list, and how to describe the rest in the footer.
+        List<FileRow> shown = rows;
+        string omittedAs = $"under {MostThresholdGiB} GiB";
+        if (live)
         {
-            eligible = rows.FindIndex(r => r.Total < MostMinPages);
-            if (eligible < 0)
-                eligible = rows.Count;
+            shown = [.. rows.Where(r => r.Active >= MostMinPages).OrderByDescending(r => r.Active)];
+            omittedAs = $"with under {MostThresholdGiB} GiB Active";
+        }
+        else if (most)
+        {
+            // Rows are sorted largest first, so --most keeps a prefix of the list.
+            int keep = rows.FindIndex(r => r.Total < MostMinPages);
+            shown = keep < 0 ? rows : rows[..keep];
         }
 
-        // Prefix: four 9-wide columns, single spaces between, two before path.
-        const int prefixWidth = 9 * 4 + 3 + 2;
+        // Prefix: two 9-wide columns, a single space between, two before path.
+        const int prefixWidth = 9 * 2 + 1 + 2;
 
-        int limit = eligible;
+        int limit = shown.Count;
         int pathWidth = int.MaxValue;
         if (lineCounter is not null && ConsoleWindow.VisibleSize() is { } s)
         {
@@ -45,11 +58,10 @@ internal static class FileTable
             //   2  summary line + blank line (--debug only)
             //   2  column header, rule
             //   2  shell's blank line + next prompt
-            // Rows that don't fit are dropped silently; --all lists them. No
-            // footer is needed here: --most implies --all, so it never reaches
-            // this branch.
+            // Rows that don't fit are dropped silently, and so is the footer;
+            // --all lists everything.
             int left = s.Rows - 1 - lineCounter.RowsUsed - (debug ? 2 : 0) - 2 - 2;
-            limit = Math.Clamp(left, 0, eligible);
+            limit = Math.Clamp(left, 0, shown.Count);
             pathWidth = Math.Max(20, s.Columns - prefixWidth - 1);
         }
 
@@ -58,24 +70,32 @@ internal static class FileTable
             PrintSummary(rows);
             Console.WriteLine();
         }
-        Console.WriteLine($"{"Total GiB",9} {"Active",9} {"Standby",9} {"Modified",9}  File");
-        Console.WriteLine(new string('-', 66));
+        // Second column: Standby normally; Active with --live, the list's sort key.
+        string secondName = live ? "Active" : "Standby";
+        Console.WriteLine($"{"Total GiB",9} {secondName,9}  File");
+        Console.WriteLine(new string('-', 46));
         for (int i = 0; i < limit; i++)
         {
-            var r = rows[i];
-            Console.WriteLine(
-                $"{Pages.ToGiB(r.Total),9:N3} {Pages.ToGiB(r.Active),9:N3} " +
-                $"{Pages.ToGiB(r.Standby),9:N3} {Pages.ToGiB(r.Modified),9:N3}  " +
-                ClipLeft(r.Name, pathWidth));
+            var r = shown[i];
+            string total = $"{Pages.ToGiB(r.Total),9:N3}";
+            string second = $"{Pages.ToGiB(live ? r.Active : r.Standby),9:N3}";
+
+            // Without --live, '*' marks rows whose Standby differs from Total as
+            // printed, i.e. rows with Active or Modified pages, so they stand out
+            // without comparing every pair. It uses the first of the two spaces
+            // before the path, so the columns stay aligned.
+            string mark = !live && second != total ? "*" : " ";
+            Console.WriteLine($"{total} {second}{mark} {ClipLeft(r.Name, pathWidth)}");
         }
 
-        int omitted = rows.Count - eligible;    // below the --most threshold
-        if (omitted > 0)
+        int omitted = rows.Count - shown.Count;    // filtered out by --most / --live
+        if (omitted > 0 && lineCounter is null)
         {
+            ulong omittedPages = SumTotal(rows) - SumTotal(shown);
             Console.WriteLine();
             Console.WriteLine(
-                $"... {English.Plural(omitted, "file")} under {MostThresholdGiB} GiB " +
-                $"({Pages.ToGiB(SumTotal(rows, eligible, rows.Count)):N3} GiB) omitted.");
+                $"... {English.Plural(omitted, "file")} {omittedAs} " +
+                $"({Pages.ToGiB(omittedPages):N3} GiB) omitted.");
         }
     }
 
@@ -100,11 +120,11 @@ internal static class FileTable
             $"({pct:N1}% resolved to a name)");
     }
 
-    private static ulong SumTotal(List<FileRow> rows, int from, int to)
+    private static ulong SumTotal(List<FileRow> rows)
     {
         ulong sum = 0;
-        for (int i = from; i < to; i++)
-            sum += rows[i].Total;
+        foreach (var r in rows)
+            sum += r.Total;
         return sum;
     }
 

@@ -36,6 +36,11 @@ internal static partial class Superfetch
     internal const int UseMappedFile = 1;
     internal const int UseMetafile = 8;
 
+    internal const int ListStandby = 2;
+
+    /// <summary>Page priorities run 0-7; Windows reuses low-priority Standby pages first.</summary>
+    internal const int PriorityLevels = 8;
+
     internal static readonly string[] UseNames =
     [
         "Process Private",
@@ -126,6 +131,7 @@ internal static partial class Superfetch
         PhysRange[] ranges,
         ulong[] useCounts,
         ulong[] listCounts,
+        ulong[] standbyByPriority,
         Dictionary<ulong, ulong[]>? files,
         Action<ulong, ulong>? progress)
     {
@@ -164,6 +170,8 @@ internal static partial class Superfetch
                         useCounts[use]++;
                     if ((uint)list < (uint)listCounts.Length)
                         listCounts[list]++;
+                    if (list == ListStandby)
+                        standbyByPriority[page.Priority]++;
                     if (files is not null && use is UseMappedFile or UseMetafile)
                     {
                         // Counts layout: [list] for Mapped File, then
@@ -241,6 +249,8 @@ internal static partial class Superfetch
         public readonly int UseDescription => (int)(U1 & 0xF);
 
         public readonly int ListDescription => (int)((U1 >> 4) & 0x7);
+
+        public readonly int Priority => (int)((U1 >> 57) & 0x7);
     }
 
     [LibraryImport("ntdll.dll")]

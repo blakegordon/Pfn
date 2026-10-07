@@ -22,6 +22,8 @@ namespace PfnUseDump;
 //   Pfn --files          (per-file RAM use, clipped to the console window)
 //   Pfn --files --all    (every file)
 //   Pfn --most           (every file that prints as at least 0.001 GiB)
+//   Pfn --live           (only files with Active pages, largest Active first)
+//   Pfn --priority       (Standby memory by page priority)
 internal static class Program
 {
     private static int Main(string[] args)
@@ -78,9 +80,10 @@ internal static class Program
 
             var use = new ulong[16];
             var list = new ulong[8];
+            var standbyByPriority = new ulong[Superfetch.PriorityLevels];
             var fileCounts = opt.Files ? new Dictionary<ulong, ulong[]>() : null;
             DateTime last = DateTime.MinValue;
-            Superfetch.Classify(ranges, use, list, fileCounts, (done, total) =>
+            Superfetch.Classify(ranges, use, list, standbyByPriority, fileCounts, (done, total) =>
             {
                 if (opt.Quiet)
                     return;
@@ -115,6 +118,11 @@ internal static class Program
             SummaryTables.PrintUse(use, opt.Top);
             Console.WriteLine();
             SummaryTables.PrintList(list, opt.Top);
+            if (opt.Priority)
+            {
+                Console.WriteLine();
+                SummaryTables.PrintStandbyPriority(standbyByPriority, opt.Top);
+            }
 
             if (fileRows is not null)
             {
@@ -128,11 +136,11 @@ internal static class Program
                         $"{etwStats.BuffersWritten:N0} buffers written " +
                         $"({etwStats.BufferSizeKB:N0} KB, max {etwStats.MaximumBuffers:N0})");
                 }
-                FileTable.Print(fileRows, lineCounter, opt.Most, opt.Debug);
+                FileTable.Print(fileRows, lineCounter, opt.Most, opt.Live, opt.Debug);
             }
 
             if (opt.Csv is not null)
-                CsvReport.Write(opt.Csv, use, list, fileRows);
+                CsvReport.Write(opt.Csv, use, list, opt.Priority ? standbyByPriority : null, fileRows);
 
             return 0;
         }
