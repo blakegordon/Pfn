@@ -17,6 +17,10 @@ internal static class FileTable
     private const double MostThresholdGiB = 0.0005;
     private static readonly ulong MostMinPages = (ulong)Math.Ceiling(MostThresholdGiB * Pages.PerGiB);
 
+    // Fewest files listed when fitting to the window, so a small screen still
+    // shows something useful (the output may then scroll).
+    private const int MinFittedRows = 5;
+
     /// <param name="rows">All file rows, sorted largest first.</param>
     /// <param name="lineCounter">
     /// Non-null when the table must fit the visible window: rows already
@@ -59,9 +63,10 @@ internal static class FileTable
             //   2  column header, rule
             //   2  shell's blank line + next prompt
             // Rows that don't fit are dropped silently, and so is the footer;
-            // --all lists everything.
+            // --all lists everything. On a short window, though, at least
+            // MinFittedRows files are listed even if the output then scrolls.
             int left = s.Rows - 1 - lineCounter.RowsUsed - (debug ? 2 : 0) - 2 - 2;
-            limit = Math.Clamp(left, 0, shown.Count);
+            limit = Math.Min(Math.Max(left, MinFittedRows), shown.Count);
             pathWidth = Math.Max(20, s.Columns - prefixWidth - 1);
         }
 

@@ -37,8 +37,9 @@ internal sealed class Options
                 '*' marks a Standby that differs from Total.
                 --csv has all four counts. Names come from a
                 short kernel ETW file rundown. The list is cut
-                to fit the visible console window unless --all
-                is given or output is redirected.
+                to fit the visible console window (but shows at
+                least 5 files) unless --all is given or output
+                is redirected.
 
     -a, --all   With --files: list every file (implies --files).
 

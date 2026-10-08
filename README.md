@@ -72,7 +72,7 @@ Pfn [--csv=<file>] [--quiet] [--top] [--priority]
 | `-q`, `--quiet` | Print only the report, with no progress or status lines. |
 | `-t`, `--top` | Omit categories under 1 GiB and sort each table by size, largest first. |
 | `-p`, `--priority` | Also show Standby memory by page priority (0-7). When memory runs short, Windows reuses Standby pages lowest priority first. |
-| `-f`, `--files` | List files with pages in RAM (Total and Standby GiB), largest first. Total minus Standby is the file's Active + Modified, and `*` marks a Standby figure that differs from Total; `--csv` has all four counts. The list is cut to fit the console window unless `--all` is given or output is redirected. |
+| `-f`, `--files` | List files with pages in RAM (Total and Standby GiB), largest first. Total minus Standby is the file's Active + Modified, and `*` marks a Standby figure that differs from Total; `--csv` has all four counts. The list is cut to fit the console window (but shows at least 5 files) unless `--all` is given or output is redirected. |
 | `-a`, `--all` | List every file. Implies `--files`. |
 | `-m`, `--most` | Like `--all`, but leave out files that would print as 0.000 GiB. Implies `--all`. |
 | `-l`, `--live` | List only files with Active pages (in use right now, not just cached), showing Total and Active GiB, largest Active first. Implies `--files`. |
